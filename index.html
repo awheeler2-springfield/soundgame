@@ -1,0 +1,263 @@
+import React, { useEffect, useRef, useState } from "react";
+
+export default function CelestialMusicGame() {
+
+  const canvasRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const oscillatorsRef = useRef([]);
+  const animationRef = useRef(null);
+
+  const [running, setRunning] = useState(false);
+  const [tempo, setTempo] = useState(1);
+  const [complexity, setComplexity] = useState(5);
+  const [mode, setMode] = useState("harmonic");
+
+  const planets = useRef([]);
+
+  useEffect(() => {
+    planets.current = Array.from({ length: 8 }, (_, i) => ({
+      radius: 50 + i * 28,
+      angle: Math.random() * Math.PI * 2,
+      speed: 0.002 + (0.0007 * (8 - i)),
+      size: 5 + i,
+      hue: 180 + i * 20,
+      freq: 110 * Math.pow(2, i / 2.8),
+    }));
+
+    draw();
+
+    return () => {
+      stopAudio();
+      cancelAnimationFrame(animationRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (running) {
+      startAudio();
+      animate();
+    } else {
+      stopAudio();
+      cancelAnimationFrame(animationRef.current);
+      draw();
+    }
+  }, [running, tempo, complexity, mode]);
+
+  const getScaleMultiplier = (index) => {
+    if (mode === "harmonic") {
+      return [1, 1.125, 1.25, 1.5, 1.667, 2][index % 6];
+    }
+    if (mode === "dissonant") {
+      return [1, 1.07, 1.31, 1.49, 1.81, 2.17][index % 6];
+    }
+    return [1, 1.2, 1.4, 1.6, 1.8, 2.2][index % 6];
+  };
+
+  const startAudio = async () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    stopAudio();
+
+    const ctx = audioCtxRef.current;
+
+    planets.current.slice(0, complexity).forEach((planet, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+
+      osc.type = i % 2 === 0 ? "sine" : "triangle";
+
+      osc.frequency.value = planet.freq * getScaleMultiplier(i);
+
+      filter.type = "lowpass";
+      filter.frequency.value = 1200 - i * 80;
+
+      gain.gain.value = 0.02 + (0.01 * (complexity - i));
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+
+      oscillatorsRef.current.push({ osc, gain, planet });
+    });
+  };
+
+  const stopAudio = () => {
+    oscillatorsRef.current.forEach(({ osc }) => {
+      try {
+        osc.stop();
+      } catch {}
+    });
+    oscillatorsRef.current = [];
+  };
+
+  const animate = () => {
+    planets.current.forEach((planet, i) => {
+      planet.angle += planet.speed * tempo;
+
+      const oscObj = oscillatorsRef.current[i];
+
+      if (oscObj) {
+        const modulation = Math.sin(planet.angle * (i + 1));
+
+        oscObj.osc.frequency.value =
+          planet.freq * getScaleMultiplier(i) + modulation * 20;
+
+        oscObj.gain.gain.value =
+          0.01 + (Math.abs(modulation) * 0.03);
+      }
+    });
+
+    draw();
+
+    animationRef.current = requestAnimationFrame(animate);
+  };
+
+  const draw = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+
+    ctx.fillStyle = "#020617";
+    ctx.fillRect(0, 0, w, h);
+
+    for (let i = 0; i < 150; i++) {
+      ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.8})`;
+      ctx.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+    }
+
+    const cx = w / 2;
+    const cy = h / 2;
+
+    const gradient = ctx.createRadialGradient(cx, cy, 5, cx, cy, 40);
+    gradient.addColorStop(0, "#fff7cc");
+    gradient.addColorStop(1, "#f59e0b");
+
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 28, 0, Math.PI * 2);
+    ctx.fill();
+
+    planets.current.slice(0, complexity).forEach((planet, i) => {
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, planet.radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      const x = cx + Math.cos(planet.angle) * planet.radius;
+      const y = cy + Math.sin(planet.angle) * planet.radius;
+
+      ctx.fillStyle = `hsl(${planet.hue}, 80%, 65%)`;
+      ctx.beginPath();
+      ctx.arc(x, y, planet.size, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let j = i + 1; j < complexity; j++) {
+        const other = planets.current[j];
+        const ox = cx + Math.cos(other.angle) * other.radius;
+        const oy = cy + Math.sin(other.angle) * other.radius;
+
+        const dist = Math.hypot(x - ox, y - oy);
+
+        if (dist < 170) {
+          ctx.strokeStyle = `rgba(125,211,252,${0.18 - dist / 1200})`;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(ox, oy);
+          ctx.stroke();
+        }
+      }
+    });
+
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "16px sans-serif";
+    ctx.fillText("Celestial Resonance Engine", 20, 30);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center p-6 gap-6">
+      <div className="max-w-4xl w-full text-center space-y-2">
+        <h1 className="text-4xl font-bold">☄️ Celestial Music</h1>
+        <p className="text-slate-300 text-lg">
+          A speculative sound engine imagining how orbital geometry and cosmic resonance
+          might become music.
+        </p>
+      </div>
+
+      <canvas
+        ref={canvasRef}
+        width={900}
+        height={650}
+        className="rounded-3xl shadow-2xl border border-slate-700 max-w-full"
+      />
+
+      <div className="w-full max-w-4xl grid md:grid-cols-4 gap-4">
+        <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700">
+          <label className="block text-sm mb-2">Orbital Speed</label>
+          <input
+            type="range"
+            min="0.5"
+            max="4"
+            step="0.1"
+            value={tempo}
+            onChange={(e) => setTempo(parseFloat(e.target.value))}
+            className="w-full"
+          />
+          <div className="mt-2 text-sm text-slate-400">{tempo.toFixed(1)}x</div>
+        </div>
+
+        <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700">
+          <label className="block text-sm mb-2">Celestial Density</label>
+          <input
+            type="range"
+            min="2"
+            max="8"
+            step="1"
+            value={complexity}
+            onChange={(e) => setComplexity(parseInt(e.target.value))}
+            className="w-full"
+          />
+          <div className="mt-2 text-sm text-slate-400">{complexity} bodies</div>
+        </div>
+
+        <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700">
+          <label className="block text-sm mb-2">Interpretation Mode</label>
+          <select
+            value={mode}
+            onChange={(e) => setMode(e.target.value)}
+            className="w-full bg-slate-800 rounded-xl p-2"
+          >
+            <option value="harmonic">Harmonic</option>
+            <option value="dissonant">Dissonant</option>
+            <option value="ritual">Ritual</option>
+          </select>
+        </div>
+
+        <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700 flex items-center justify-center">
+          <button
+            onClick={() => setRunning(!running)}
+            className="px-6 py-3 rounded-2xl bg-cyan-500 text-slate-950 font-bold hover:scale-105 transition"
+          >
+            {running ? "Stop Transmission" : "Start Transmission"}
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-4xl bg-slate-900 rounded-3xl border border-slate-700 p-6 text-slate-300 leading-relaxed">
+        <p>
+          This is not a scientific reconstruction of the Rosetta comet recording. It is a speculative
+          instrument inspired by the idea that orbital geometry, recurrence, and resonance could become
+          a kind of cosmic music. Each orbit modulates tone and intensity, producing evolving harmonic
+          structures that behave more like environmental states than melodies.
+        </p>
+      </div>
+    </div>
+  );
+}
