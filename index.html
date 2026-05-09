@@ -1,123 +1,55 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 export default function CelestialMusicGame() {
-
   const canvasRef = useRef(null);
   const audioCtxRef = useRef(null);
   const oscillatorsRef = useRef([]);
   const animationRef = useRef(null);
+  const planetsRef = useRef([]);
+  const starsRef = useRef([]);
 
   const [running, setRunning] = useState(false);
   const [tempo, setTempo] = useState(1);
   const [complexity, setComplexity] = useState(5);
   const [mode, setMode] = useState("harmonic");
 
-  const planets = useRef([]);
+  const getScaleMultiplier = useCallback(
+    (index) => {
+      if (mode === "harmonic") {
+        return [1, 1.125, 1.25, 1.5, 1.667, 2][index % 6];
+      }
 
-  useEffect(() => {
-    planets.current = Array.from({ length: 8 }, (_, i) => ({
-      radius: 50 + i * 28,
-      angle: Math.random() * Math.PI * 2,
-      speed: 0.002 + (0.0007 * (8 - i)),
-      size: 5 + i,
-      hue: 180 + i * 20,
-      freq: 110 * Math.pow(2, i / 2.8),
-    }));
+      if (mode === "dissonant") {
+        return [1, 1.07, 1.31, 1.49, 1.81, 2.17][index % 6];
+      }
 
-    draw();
+      return [1, 1.2, 1.4, 1.6, 1.8, 2.2][index % 6];
+    },
+    [mode]
+  );
 
-    return () => {
-      stopAudio();
-      cancelAnimationFrame(animationRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (running) {
-      startAudio();
-      animate();
-    } else {
-      stopAudio();
-      cancelAnimationFrame(animationRef.current);
-      draw();
-    }
-  }, [running, tempo, complexity, mode]);
-
-  const getScaleMultiplier = (index) => {
-    if (mode === "harmonic") {
-      return [1, 1.125, 1.25, 1.5, 1.667, 2][index % 6];
-    }
-    if (mode === "dissonant") {
-      return [1, 1.07, 1.31, 1.49, 1.81, 2.17][index % 6];
-    }
-    return [1, 1.2, 1.4, 1.6, 1.8, 2.2][index % 6];
-  };
-
-  const startAudio = async () => {
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-    }
-
-    stopAudio();
-
-    const ctx = audioCtxRef.current;
-
-    planets.current.slice(0, complexity).forEach((planet, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const filter = ctx.createBiquadFilter();
-
-      osc.type = i % 2 === 0 ? "sine" : "triangle";
-
-      osc.frequency.value = planet.freq * getScaleMultiplier(i);
-
-      filter.type = "lowpass";
-      filter.frequency.value = 1200 - i * 80;
-
-      gain.gain.value = 0.02 + (0.01 * (complexity - i));
-
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-
-      oscillatorsRef.current.push({ osc, gain, planet });
-    });
-  };
-
-  const stopAudio = () => {
-    oscillatorsRef.current.forEach(({ osc }) => {
+  const stopAudio = useCallback(() => {
+    oscillatorsRef.current.forEach(({ osc, gain }) => {
       try {
+        const ctx = audioCtxRef.current;
+        const now = ctx ? ctx.currentTime : 0;
+
+        if (gain && ctx) {
+          gain.gain.cancelScheduledValues(now);
+          gain.gain.setTargetAtTime(0, now, 0.03);
+        }
+
         osc.stop();
-      } catch {}
-    });
-    oscillatorsRef.current = [];
-  };
-
-  const animate = () => {
-    planets.current.forEach((planet, i) => {
-      planet.angle += planet.speed * tempo;
-
-      const oscObj = oscillatorsRef.current[i];
-
-      if (oscObj) {
-        const modulation = Math.sin(planet.angle * (i + 1));
-
-        oscObj.osc.frequency.value =
-          planet.freq * getScaleMultiplier(i) + modulation * 20;
-
-        oscObj.gain.gain.value =
-          0.01 + (Math.abs(modulation) * 0.03);
+        osc.disconnect();
+      } catch {
+        // Oscillators can only be stopped once. Ignore repeated stop attempts.
       }
     });
 
-    draw();
+    oscillatorsRef.current = [];
+  }, []);
 
-    animationRef.current = requestAnimationFrame(animate);
-  };
-
-  const draw = () => {
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -128,10 +60,10 @@ export default function CelestialMusicGame() {
     ctx.fillStyle = "#020617";
     ctx.fillRect(0, 0, w, h);
 
-    for (let i = 0; i < 150; i++) {
-      ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.8})`;
-      ctx.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
-    }
+    starsRef.current.forEach((star) => {
+      ctx.fillStyle = `rgba(255,255,255,${star.alpha})`;
+      ctx.fillRect(star.x * w, star.y * h, star.size, star.size);
+    });
 
     const cx = w / 2;
     const cy = h / 2;
@@ -145,7 +77,7 @@ export default function CelestialMusicGame() {
     ctx.arc(cx, cy, 28, 0, Math.PI * 2);
     ctx.fill();
 
-    planets.current.slice(0, complexity).forEach((planet, i) => {
+    planetsRef.current.slice(0, complexity).forEach((planet, i) => {
       ctx.strokeStyle = "rgba(255,255,255,0.12)";
       ctx.beginPath();
       ctx.arc(cx, cy, planet.radius, 0, Math.PI * 2);
@@ -159,15 +91,14 @@ export default function CelestialMusicGame() {
       ctx.arc(x, y, planet.size, 0, Math.PI * 2);
       ctx.fill();
 
-      for (let j = i + 1; j < complexity; j++) {
-        const other = planets.current[j];
+      for (let j = i + 1; j < complexity; j += 1) {
+        const other = planetsRef.current[j];
         const ox = cx + Math.cos(other.angle) * other.radius;
         const oy = cy + Math.sin(other.angle) * other.radius;
-
         const dist = Math.hypot(x - ox, y - oy);
 
         if (dist < 170) {
-          ctx.strokeStyle = `rgba(125,211,252,${0.18 - dist / 1200})`;
+          ctx.strokeStyle = `rgba(125,211,252,${Math.max(0, 0.18 - dist / 1200)})`;
           ctx.beginPath();
           ctx.moveTo(x, y);
           ctx.lineTo(ox, oy);
@@ -179,7 +110,128 @@ export default function CelestialMusicGame() {
     ctx.fillStyle = "rgba(255,255,255,0.85)";
     ctx.font = "16px sans-serif";
     ctx.fillText("Celestial Resonance Engine", 20, 30);
-  };
+  }, [complexity]);
+
+  const startAudio = useCallback(async () => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContextClass();
+    }
+
+    const ctx = audioCtxRef.current;
+
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+
+    stopAudio();
+
+    planetsRef.current.slice(0, complexity).forEach((planet, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+
+      osc.type = i % 2 === 0 ? "sine" : "triangle";
+      osc.frequency.setValueAtTime(planet.freq * getScaleMultiplier(i), ctx.currentTime);
+
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(Math.max(200, 1200 - i * 80), ctx.currentTime);
+
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.02 + 0.01 * (complexity - i), ctx.currentTime + 0.08);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+
+      oscillatorsRef.current.push({ osc, gain, planet });
+    });
+  }, [complexity, getScaleMultiplier, stopAudio]);
+
+  const animate = useCallback(() => {
+    planetsRef.current.forEach((planet, i) => {
+      planet.angle += planet.speed * tempo;
+
+      const oscObj = oscillatorsRef.current[i];
+      if (!oscObj || !audioCtxRef.current) return;
+
+      const ctx = audioCtxRef.current;
+      const modulation = Math.sin(planet.angle * (i + 1));
+
+      oscObj.osc.frequency.setTargetAtTime(
+        planet.freq * getScaleMultiplier(i) + modulation * 20,
+        ctx.currentTime,
+        0.03
+      );
+
+      oscObj.gain.gain.setTargetAtTime(
+        0.01 + Math.abs(modulation) * 0.03,
+        ctx.currentTime,
+        0.03
+      );
+    });
+
+    draw();
+    animationRef.current = requestAnimationFrame(animate);
+  }, [draw, getScaleMultiplier, tempo]);
+
+  useEffect(() => {
+    planetsRef.current = Array.from({ length: 8 }, (_, i) => ({
+      radius: 50 + i * 28,
+      angle: Math.random() * Math.PI * 2,
+      speed: 0.002 + 0.0007 * (8 - i),
+      size: 5 + i,
+      hue: 180 + i * 20,
+      freq: 110 * Math.pow(2, i / 2.8),
+    }));
+
+    starsRef.current = Array.from({ length: 150 }, () => ({
+      x: Math.random(),
+      y: Math.random(),
+      size: 1 + Math.random() * 1.2,
+      alpha: 0.25 + Math.random() * 0.55,
+    }));
+
+    draw();
+
+    return () => {
+      stopAudio();
+
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+      }
+    };
+  }, [draw, stopAudio]);
+
+  useEffect(() => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+
+    if (running) {
+      startAudio();
+      animationRef.current = requestAnimationFrame(animate);
+    } else {
+      stopAudio();
+      draw();
+    }
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+    };
+  }, [animate, draw, running, startAudio, stopAudio]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center p-6 gap-6">
@@ -200,36 +252,45 @@ export default function CelestialMusicGame() {
 
       <div className="w-full max-w-4xl grid md:grid-cols-4 gap-4">
         <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700">
-          <label className="block text-sm mb-2">Orbital Speed</label>
+          <label className="block text-sm mb-2" htmlFor="tempo-slider">
+            Orbital Speed
+          </label>
           <input
+            id="tempo-slider"
             type="range"
             min="0.5"
             max="4"
             step="0.1"
             value={tempo}
-            onChange={(e) => setTempo(parseFloat(e.target.value))}
+            onChange={(e) => setTempo(Number(e.target.value))}
             className="w-full"
           />
           <div className="mt-2 text-sm text-slate-400">{tempo.toFixed(1)}x</div>
         </div>
 
         <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700">
-          <label className="block text-sm mb-2">Celestial Density</label>
+          <label className="block text-sm mb-2" htmlFor="complexity-slider">
+            Celestial Density
+          </label>
           <input
+            id="complexity-slider"
             type="range"
             min="2"
             max="8"
             step="1"
             value={complexity}
-            onChange={(e) => setComplexity(parseInt(e.target.value))}
+            onChange={(e) => setComplexity(Number(e.target.value))}
             className="w-full"
           />
           <div className="mt-2 text-sm text-slate-400">{complexity} bodies</div>
         </div>
 
         <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700">
-          <label className="block text-sm mb-2">Interpretation Mode</label>
+          <label className="block text-sm mb-2" htmlFor="mode-select">
+            Interpretation Mode
+          </label>
           <select
+            id="mode-select"
             value={mode}
             onChange={(e) => setMode(e.target.value)}
             className="w-full bg-slate-800 rounded-xl p-2"
@@ -242,7 +303,8 @@ export default function CelestialMusicGame() {
 
         <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700 flex items-center justify-center">
           <button
-            onClick={() => setRunning(!running)}
+            type="button"
+            onClick={() => setRunning((current) => !current)}
             className="px-6 py-3 rounded-2xl bg-cyan-500 text-slate-950 font-bold hover:scale-105 transition"
           >
             {running ? "Stop Transmission" : "Start Transmission"}
